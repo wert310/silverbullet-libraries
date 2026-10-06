@@ -60,9 +60,14 @@ Sync state is anchored on the file's `last_commit_id`, so commits touching other
 
 The library intentionally does not use a local Git repository and does not store document contents as synchronization metadata.
 
+### Status widget
+
+Synced pages show a status bar at the top: whether the page has local changes, whether GitLab has moved on, or whether conflict markers are still waiting to be resolved. Local status is computed from the page itself; remote status costs one request and is cached for a minute. **Check GitLab** refreshes it immediately.
+
 ```space-lua
 local GITLAB_SYNC_STATE = "gitlabSync.state"
 local MAX_SYNC_RETRIES = 3
+local REMOTE_TTL = 60
 
 config.define("gitlabSync", {
   description = "GitLabSync configuration",
@@ -94,25 +99,29 @@ config.define("gitlabSync", {
 -- Configuration ---------------------------------------------------------------
 
 -- Resolves this page's frontmatter together with the connection it names,
--- reporting the first problem it finds.
-local function syncConfig()
+-- reporting the first problem it finds unless `quiet` is set.
+local function syncConfig(quiet)
   local meta = editor.getCurrentPageMeta()
   local pcfg = meta and meta.gitlabSync
 
   if type(pcfg) ~= "table" or not pcfg.instance or not pcfg.project or not pcfg.file then
-    editor.flashNotification(
-      "This page needs gitlabSync frontmatter with instance, project and file.",
-      "error"
-    )
+    if not quiet then
+      editor.flashNotification(
+        "This page needs gitlabSync frontmatter with instance, project and file.",
+        "error"
+      )
+    end
     return nil
   end
 
   local instance = config.get("gitlabSync.instances", {})[pcfg.instance]
   if not instance or not instance.apiUrl or not instance.token then
-    editor.flashNotification(
-      "GitLab connection '" .. tostring(pcfg.instance) .. "' is missing or incomplete.",
-      "error"
-    )
+    if not quiet then
+      editor.flashNotification(
+        "GitLab connection '" .. tostring(pcfg.instance) .. "' is missing or incomplete.",
+        "error"
+      )
+    end
     return nil
   end
 
@@ -296,6 +305,10 @@ local function urlEncode(s)
   end))
 end
 
+-- SilverBullet's server proxy decodes the request path once before forwarding
+-- it, which would turn the %2F GitLab requires in project and file paths back
+-- into real slashes. Encoding path segments twice makes them arrive encoded
+-- exactly once. The query string is passed through untouched.
 local function pathEncode(s)
   return (urlEncode(s):gsub("%%", "%%25"))
 end
@@ -344,6 +357,40 @@ local function getRemoteFile(gcfg, pcfg, ref)
     -- head of the requested ref and moves on every unrelated commit.
     commit = meta.body.last_commit_id,
   }
+end
+
+-- Status of the GitLab file for the widget, cached per page. Only the file's
+-- last commit is needed, so the raw content is never fetched here.
+local remoteCache = {}
+
+local function remoteStatus(pcfg, gcfg, force)
+  local key = stateKey(pcfg)
+  local cached = remoteCache[key]
+  if not force and cached and os.time() - cached.at < REMOTE_TTL then
+    return cached
+  end
+
+  local entry
+  local ok, res = pcall(gitlabRequest, gcfg, fileUrl(gcfg, pcfg, "", pcfg.branch))
+  if not ok then
+    entry = { error = tostring(res) }
+  elseif res.status == 404 then
+    local msg = type(res.body) == "table" and res.body.message or nil
+    entry = msg == "404 File Not Found" and { missing = true }
+      or { error = "HTTP 404 " .. tostring(msg or "") }
+  elseif not res.ok then
+    entry = { error = "HTTP " .. tostring(res.status) }
+  else
+    entry = { commit = res.body.last_commit_id }
+  end
+
+  entry.at = os.time()
+  remoteCache[key] = entry
+  return entry
+end
+
+local function refreshWidgets()
+  pcall(function() codeWidget.refreshAll() end)
 end
 
 -- Commits `content`. Given an `expectedCommit` the write is refused if the
@@ -405,7 +452,9 @@ local function syncOnce(pcfg, gcfg)
       editor.save()
     end
     clientStore.set(stateKey(pcfg), { commit = commit, hash = crypto.sha256(text) })
+    remoteCache[stateKey(pcfg)] = { commit = commit, at = os.time() }
     editor.flashNotification(message, kind or "info")
+    refreshWidgets()
     return true
   end
 
@@ -502,7 +551,189 @@ command.define {
     if pcfg and editor.confirm("Forget the local GitLab sync state for this page?") then
       clientStore.delete(stateKey(pcfg))
       editor.flashNotification("GitLab sync state forgotten.", "info")
+      refreshWidgets()
     end
   end,
+}
+
+-- Status widget ---------------------------------------------------------------
+
+local function hasConflictMarkers(text)
+  return ("\n" .. text):find("\n<<<<<<< local\n", 1, true) ~= nil
+end
+
+-- Returns a CSS state name and a sentence describing where the page stands.
+local function describeStatus(text, state, remote)
+  local localChanged = not state or crypto.sha256(text) ~= state.hash
+  local remoteChanged = state and remote.commit and remote.commit ~= state.commit
+
+  if hasConflictMarkers(text) then
+    return "conflict", "Conflict markers in page"
+  elseif remote.error then
+    return "unknown", localChanged and "Local changes, GitLab unreachable"
+      or "No local changes, GitLab unreachable"
+  elseif not state then
+    return "new", remote.missing and "Not in GitLab yet" or "Not synced yet"
+  elseif remote.missing then
+    return "missing", "File missing in GitLab"
+  elseif localChanged and remoteChanged then
+    return "both", "Changed here and in GitLab"
+  elseif localChanged then
+    return "local", "Local changes not pushed"
+  elseif remoteChanged then
+    return "remote", "GitLab has newer changes"
+  end
+  return "ok", "In sync"
+end
+
+event.listen {
+  name = "hooks:renderTopWidgets",
+  run = function()
+    local pcfg, gcfg = syncConfig(true)
+    if not pcfg then
+      return widget.new {}
+    end
+
+    local state = clientStore.get(stateKey(pcfg))
+    local remote = remoteStatus(pcfg, gcfg)
+    local kind, label = describeStatus(editor.getText(), state, remote)
+
+    return widget.htmlBlock(dom.div {
+      class = "gitlab-sync-status gitlab-sync-" .. kind,
+      title = remote.error or (pcfg.instance .. ": " .. pcfg.project),
+      dom.span { class = "gitlab-sync-dot" },
+      dom.span { class = "gitlab-sync-label", label },
+      dom.span { class = "gitlab-sync-ref", pcfg.file .. " on " .. pcfg.branch },
+      dom.button {
+        class = "gitlab-sync-action",
+        onclick = function()
+          remoteStatus(pcfg, gcfg, true)
+          refreshWidgets()
+        end,
+        "Check GitLab",
+      },
+      dom.button {
+        class = "gitlab-sync-action gitlab-sync-primary",
+        onclick = function() system.invokeCommand("GitLab: Sync") end,
+        "Sync",
+      },
+    })
+  end,
+}
+
+-- Re-evaluate local status on save in case top widgets aren't re-rendered on
+-- every edit.
+event.listen {
+  name = "editor:pageSaved",
+  run = function() refreshWidgets() end,
+}
+```
+
+```space-style
+/* Drop SilverBullet's default frame around this one top widget. */
+#sb-main .cm-editor .sb-lua-top-widget:has(.gitlab-sync-status) {
+  border: none;
+  background: none;
+  padding: 0;
+}
+
+.gitlab-sync-status {
+  --gls: #8a8f98;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em 0.75em;
+  margin: 0.25em 0 0.75em;
+  padding: 0.45em 0.55em 0.45em 0.85em;
+  border-left: 3px solid var(--gls);
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--gls) 9%, transparent);
+  font-size: 0.85em;
+  line-height: 1.4;
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+.gitlab-sync-ok       { --gls: #2f9e6b; }
+.gitlab-sync-local    { --gls: #b07d0c; }
+.gitlab-sync-remote   { --gls: #2f74c8; }
+.gitlab-sync-both     { --gls: #c8601c; }
+.gitlab-sync-conflict { --gls: #cf3a4c; }
+.gitlab-sync-missing  { --gls: #a8569a; }
+.gitlab-sync-new,
+.gitlab-sync-unknown  { --gls: #8a8f98; }
+
+.gitlab-sync-dot {
+  flex: none;
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 50%;
+  background: var(--gls);
+}
+
+/* The only animated state: something needs a person to look at it. */
+.gitlab-sync-conflict .gitlab-sync-dot {
+  animation: gitlab-sync-pulse 1.6s ease-out infinite;
+}
+
+@keyframes gitlab-sync-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--gls) 55%, transparent); }
+  100% { box-shadow: 0 0 0 0.55em transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gitlab-sync-status { transition: none; }
+  .gitlab-sync-conflict .gitlab-sync-dot { animation: none; }
+}
+
+.gitlab-sync-label {
+  font-weight: 600;
+}
+
+.gitlab-sync-ref {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.6;
+  font-family: var(--editor-code-font-family, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+}
+
+.gitlab-sync-action {
+  font: inherit;
+  padding: 0.15em 0.75em;
+  border: 1px solid color-mix(in srgb, var(--gls) 45%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.gitlab-sync-action:hover {
+  background: color-mix(in srgb, var(--gls) 16%, transparent);
+}
+
+.gitlab-sync-action:focus-visible {
+  outline: 2px solid var(--gls);
+  outline-offset: 1px;
+}
+
+.gitlab-sync-primary {
+  border-color: var(--gls);
+  background: var(--gls);
+  color: #fff;
+  font-weight: 600;
+}
+
+.gitlab-sync-primary:hover {
+  background: color-mix(in srgb, var(--gls) 82%, black);
+}
+
+/* Nothing to do: keep the bar quiet. */
+.gitlab-sync-ok .gitlab-sync-primary {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--gls) 45%, transparent);
+  color: inherit;
+  font-weight: normal;
 }
 ```
