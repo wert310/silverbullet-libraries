@@ -64,6 +64,8 @@ The library intentionally does not use a local Git repository and does not store
 
 Synced pages show a status bar at the top: whether the page has local changes, whether GitLab has moved on, or whether conflict markers are still waiting to be resolved. Local status is computed from the page itself; remote status costs one request and is cached for a minute. **Check GitLab** refreshes it immediately.
 
+## Code
+
 ```space-lua
 local GITLAB_SYNC_STATE = "gitlabSync.state"
 local MAX_SYNC_RETRIES = 3
@@ -633,6 +635,8 @@ event.listen {
   run = function() refreshWidgets() end,
 }
 ```
+
+## Style
 
 ```space-style
 /* Drop SilverBullet's default frame around this one top widget. */
