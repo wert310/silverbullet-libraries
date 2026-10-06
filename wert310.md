@@ -13,5 +13,5 @@ name: GitLab Sync
 description: Synchronize the current SilverBullet page with one Markdown file in a GitLab repository.
 author: wert310
 website: https://github.com/wert310/silverbullet-libraries
-uri: https://github.com/wert310/silverbullet-libraries/blob/main/GitLabSync.md
+uri: https://github.com/wert310/silverbullet-libraries/blob/main/GitLab%20Sync.md
 ```
