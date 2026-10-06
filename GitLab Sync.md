@@ -562,19 +562,6 @@ local function hasConflictMarkers(text)
   return ("\n" .. text):find("\n<<<<<<< local\n", 1, true) ~= nil
 end
 
-local function conflictCount(text)
-  local n = 0
-  for _ in ("\n" .. text):gmatch("\n<<<<<<< ") do
-    n = n + 1
-  end
-  return n
-end
-
--- What the widget last showed on the current page, or nil when the page is not
--- synced. The edit listener below decides from this alone whether a keystroke
--- can change the widget, so ordinary typing costs a couple of comparisons.
-local shown = nil
-
 -- Returns a CSS state name and a sentence describing where the page stands.
 local function describeStatus(text, state, remote)
   local localChanged = not state or crypto.sha256(text) ~= state.hash
@@ -604,15 +591,12 @@ event.listen {
   run = function()
     local pcfg, gcfg = syncConfig(true)
     if not pcfg then
-      shown = nil
       return widget.new {}
     end
 
-    local text = editor.getText()
     local state = clientStore.get(stateKey(pcfg))
     local remote = remoteStatus(pcfg, gcfg)
-    local kind, label = describeStatus(text, state, remote)
-    shown = { kind = kind, conflicts = conflictCount(text) }
+    local kind, label = describeStatus(editor.getText(), state, remote)
 
     return widget.htmlBlock(dom.div {
       class = "gitlab-sync-status gitlab-sync-" .. kind,
@@ -647,33 +631,6 @@ event.listen {
 event.listen {
   name = "editor:pageSaved",
   run = function() refreshWidgets() end,
-}
-
--- Typing can change the widget in only two ways: the first edit after a sync
--- (In sync / remote changes become local / both changed), and resolving
--- conflict hunks, which in SilverBullet's conflict UI also drops the top
--- widget until something re-renders it. Every other keystroke returns after
--- two comparisons, without reading the page.
-event.listen {
-  name = "editor:pageModified",
-  run = function()
-    if not shown then
-      return
-    end
-    if shown.kind == "ok" or shown.kind == "remote" then
-      -- Re-render once; marking it pending stops the keystrokes typed before
-      -- that render lands from each triggering another one.
-      shown.kind = "pending"
-      refreshWidgets()
-      return
-    end
-    if shown.conflicts == 0 then
-      return
-    end
-    if conflictCount(editor.getText()) ~= shown.conflicts then
-      refreshWidgets()
-    end
-  end,
 }
 ```
 
