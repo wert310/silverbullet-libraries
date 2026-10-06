@@ -604,17 +604,19 @@ event.listen {
       dom.span { class = "gitlab-sync-dot" },
       dom.span { class = "gitlab-sync-label", label },
       dom.button {
-        class = "gitlab-sync-action",
+        class = "gitlab-sync-action gitlab-sync-check",
+        title = "Check GitLab for changes",
+        ["aria-label"] = "Check GitLab for changes",
         onclick = function()
           remoteStatus(pcfg, gcfg, true)
           refreshWidgets()
         end,
-        "Check GitLab",
       },
       dom.button {
-        class = "gitlab-sync-action gitlab-sync-primary",
+        class = "gitlab-sync-action gitlab-sync-primary gitlab-sync-run",
+        title = "Sync with GitLab",
+        ["aria-label"] = "Sync with GitLab",
         onclick = function() system.invokeCommand("GitLab: Sync") end,
-        "Sync",
       },
       dom.span {
         class = "gitlab-sync-ref",
@@ -642,15 +644,12 @@ event.listen {
 
 .gitlab-sync-status {
   --gls: #8a8f98;
-  /* Room on the right for SilverBullet's own widget buttons, which appear
-     there on hover. Tune it if they still overlap. */
-  --gls-reserve: 5.5em;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4em 0.75em;
+  gap: 0.4em 0.6em;
   margin: 0.25em 0 0.75em;
-  padding: 0.45em var(--gls-reserve) 0.45em 0.85em;
+  padding: 0.35em 0.55em 0.35em 0.85em;
   border-left: 3px solid var(--gls);
   border-radius: 0 6px 6px 0;
   background: color-mix(in srgb, var(--gls) 9%, transparent);
@@ -696,8 +695,10 @@ event.listen {
 }
 
 .gitlab-sync-ref {
-  flex: 1;
-  min-width: 0;
+  /* Grows into the leftover space and truncates rather than wrapping; only on
+     very narrow screens does it move to a line of its own. */
+  flex: 1 1 0;
+  min-width: 8em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -705,14 +706,39 @@ event.listen {
   font-family: var(--editor-code-font-family, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
 }
 
+/* Icon buttons. The icons are Feather icons (MIT) drawn as CSS masks, so
+   they take the button's text color and need no extra DOM. */
 .gitlab-sync-action {
-  font: inherit;
-  padding: 0.15em 0.75em;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 1.9em;
+  height: 1.9em;
+  padding: 0;
   border: 1px solid color-mix(in srgb, var(--gls) 45%, transparent);
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
   color: inherit;
   cursor: pointer;
+}
+
+.gitlab-sync-action::before {
+  content: "";
+  width: 1.05em;
+  height: 1.05em;
+  background: currentColor;
+  -webkit-mask: var(--gls-icon) center / contain no-repeat;
+  mask: var(--gls-icon) center / contain no-repeat;
+}
+
+/* feather: search */
+.gitlab-sync-check {
+  --gls-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+}
+
+/* feather: repeat */
+.gitlab-sync-run {
+  --gls-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='17 1 21 5 17 9'/%3E%3Cpath d='M3 11V9a4 4 0 0 1 4-4h14'/%3E%3Cpolyline points='7 23 3 19 7 15'/%3E%3Cpath d='M21 13v2a4 4 0 0 1-4 4H3'/%3E%3C/svg%3E");
 }
 
 .gitlab-sync-action:hover {
@@ -728,7 +754,6 @@ event.listen {
   border-color: var(--gls);
   background: var(--gls);
   color: #fff;
-  font-weight: 600;
 }
 
 .gitlab-sync-primary:hover {
@@ -740,6 +765,5 @@ event.listen {
   background: transparent;
   border-color: color-mix(in srgb, var(--gls) 45%, transparent);
   color: inherit;
-  font-weight: normal;
 }
 ```
