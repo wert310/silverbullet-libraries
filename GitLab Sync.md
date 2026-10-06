@@ -600,10 +600,9 @@ event.listen {
 
     return widget.htmlBlock(dom.div {
       class = "gitlab-sync-status gitlab-sync-" .. kind,
-      title = remote.error or (pcfg.instance .. ": " .. pcfg.project),
+      title = remote.error or ("GitLab instance: " .. pcfg.instance),
       dom.span { class = "gitlab-sync-dot" },
       dom.span { class = "gitlab-sync-label", label },
-      dom.span { class = "gitlab-sync-ref", pcfg.file .. " on " .. pcfg.branch },
       dom.button {
         class = "gitlab-sync-action",
         onclick = function()
@@ -616,6 +615,10 @@ event.listen {
         class = "gitlab-sync-action gitlab-sync-primary",
         onclick = function() system.invokeCommand("GitLab: Sync") end,
         "Sync",
+      },
+      dom.span {
+        class = "gitlab-sync-ref",
+        pcfg.file .. " on " .. pcfg.project .. ":" .. pcfg.branch,
       },
     })
   end,
@@ -639,12 +642,15 @@ event.listen {
 
 .gitlab-sync-status {
   --gls: #8a8f98;
+  /* Room on the right for SilverBullet's own widget buttons, which appear
+     there on hover. Tune it if they still overlap. */
+  --gls-reserve: 5.5em;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.4em 0.75em;
   margin: 0.25em 0 0.75em;
-  padding: 0.45em 0.55em 0.45em 0.85em;
+  padding: 0.45em var(--gls-reserve) 0.45em 0.85em;
   border-left: 3px solid var(--gls);
   border-radius: 0 6px 6px 0;
   background: color-mix(in srgb, var(--gls) 9%, transparent);
