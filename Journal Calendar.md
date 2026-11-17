@@ -110,12 +110,6 @@ local function calJournalCalendar()
   local due      = calStep("due",      calDueDays)
 
   return calStep("render", function()
-  -- detect the editor theme so the widget matches it (light / dark)
-  local theme = "light"
-  pcall(function()
-    if editor.getUiOption("darkMode") then theme = "dark" end
-  end)
-
   -- month to show; leave empty to default to the current month (picked in JS)
   local view = ""
   local okV, savedView = pcall(clientStore.get, "journalCalendar.view")
@@ -167,7 +161,7 @@ local function calJournalCalendar()
       .cal-dow { font-size:.66rem; }
     }
   </style>
-  <div class="cal" id="cal" data-view=']=] .. view .. [=[' data-journals=']=] .. j .. [=[' data-due=']=] .. d .. [=[' data-theme=']=] .. theme .. [=['></div>
+  <div class="cal" id="cal" data-view=']=] .. view .. [=[' data-journals=']=] .. j .. [=[' data-due=']=] .. d .. [=['></div>
   ]=]
 
   local script = [=[
@@ -176,8 +170,20 @@ local function calJournalCalendar()
       const prefix = "]=] .. calConfig.prefix .. [=[";
       const journals = JSON.parse(wrap.dataset.journals || "{}");
       const due      = JSON.parse(wrap.dataset.due      || "{}");
-      document.documentElement.classList.add("cal-dark");
-      if (wrap.dataset.theme !== "dark") document.documentElement.classList.remove("cal-dark");
+      // SilverBullet puts the editor's actual scheme on this sandbox iframe's
+      // <html> (data-theme; data-sb-scheme on newer versions), so it is right
+      // even while dark mode follows the system. editor.getUiOption("darkMode")
+      // cannot be used: it is nil while dark mode follows the OS.
+      const setTheme = () => {
+        const root = document.documentElement;
+        root.classList.toggle("cal-dark",
+          (root.dataset.sbScheme || root.dataset.theme) === "dark");
+      };
+      setTheme();
+      // newer SilverBullet versions push live theme changes to sandboxed widgets
+      window.addEventListener("message", (m) => {
+        if (m.data && m.data.type === "theme") setTheme();
+      });
 
       const PAD = n => String(n).padStart(2, "0");
       const MONTHS = ["January","February","March","April","May","June",
